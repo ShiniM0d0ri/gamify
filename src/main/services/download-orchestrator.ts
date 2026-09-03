@@ -74,6 +74,24 @@ export class DownloadOrchestrator {
   private static reconnectGraceTimer: NodeJS.Timeout | null = null;
   private static lastReconnectAt = 0;
 
+  private static async getMaxConcurrentFiles(): Promise<number> {
+    try {
+      const { db } = await import("@main/level");
+      const { levelKeys } = await import("@main/level/sublevels/keys");
+      const prefs = await db.get<string, { gamifyMaxConcurrentFiles?: number } | null>(
+        levelKeys.userPreferences,
+        { valueEncoding: "json" }
+      ).catch(() => null);
+      const v = prefs?.gamifyMaxConcurrentFiles;
+      if (typeof v === "number" && v >= 1 && v <= 8) return Math.floor(v);
+    } catch {}
+    return 3; // Gamify default Tier B
+  }
+
+  private static async countActiveDownloads(downloads: Download[]): Promise<number> {
+    return downloads.filter((d) => isActiveLikeDownload(d)).length;
+  }
+
   static onNetworkStatusChanged(payload: {
     online: boolean;
     switched?: boolean;
@@ -384,14 +402,10 @@ export class DownloadOrchestrator {
 
   static async startPreparedDownload(download: Download) {
     const { downloads } = await this.getDownloadsWithLayout();
-    const currentActiveDownload =
-      downloads.find(
-        (entry) =>
-          isActiveLikeDownload(entry) &&
-          getDownloadId(entry) !== getDownloadId(download)
-      ) ?? null;
+    const activeCount = await this.countActiveDownloads(downloads);
+    const maxConcurrent = await this.getMaxConcurrentFiles();
 
-    if (currentActiveDownload) {
+    if (activeCount >= maxConcurrent) {
       await this.queueDownload(download);
       WindowManager.sendDownloadsUpdated();
       return { ok: true };
@@ -428,6 +442,8 @@ export class DownloadOrchestrator {
     }
 
     const downloads = await this.getAllDownloads();
+    const activeCount = await this.countActiveDownloads(downloads);
+    const maxConcurrent = await this.getMaxConcurrentFiles();
     const currentActiveDownload =
       downloads.find(
         (entry) =>
@@ -435,13 +451,13 @@ export class DownloadOrchestrator {
           getDownloadId(entry) !== getDownloadId(download)
       ) ?? null;
 
-    if (currentActiveDownload && strategy === "queueIfActive") {
+    if (activeCount >= maxConcurrent && strategy === "queueIfActive") {
       await this.queueDownload(download, { toFront: true });
       WindowManager.sendDownloadsUpdated();
       return true;
     }
 
-    if (currentActiveDownload) {
+    if (currentActiveDownload && activeCount >= maxConcurrent) {
       await this.pauseDownload(currentActiveDownload, {
         reason: "paused",
         startNextQueued: false,
