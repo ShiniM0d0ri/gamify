@@ -103,6 +103,8 @@ export interface Download {
   fileIndices?: number[];
   selectedFilesSize?: number | null;
   customTrackers?: string[];
+  // Gamify: alternative mirrors for same file (mirror racing Tier C / Metalink Tier D)
+  alternativeUris?: string[];
 }
 
 export interface DownloadLayoutState {
