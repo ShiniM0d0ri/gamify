@@ -36,6 +36,11 @@ const buildForm = (preferences: UserPreferences | null) => ({
   deleteArchiveFilesAfterExtractionByDefault:
     preferences?.deleteArchiveFilesAfterExtractionByDefault ?? false,
   torrentNetworkInterface: preferences?.torrentNetworkInterface ?? "",
+  gamifyEnableParallelDownloads:
+    preferences?.gamifyEnableParallelDownloads ?? true,
+  gamifyMaxConnections: preferences?.gamifyMaxConnections ?? 16,
+  gamifyMaxConcurrentFiles: preferences?.gamifyMaxConcurrentFiles ?? 3,
+  gamifyAutoReResolve: preferences?.gamifyAutoReResolve ?? true,
 });
 
 export function SettingsContextDownloads() {
@@ -259,6 +264,57 @@ export function SettingsContextDownloads() {
             }
           />
         )}
+
+        <div style={{ marginTop: 16, borderTop: "1px solid var(--border-color)", paddingTop: 16 }}>
+          <h4>{t("gamify_accelerated_downloads", "Gamify — Accelerated Downloads (Windows)")}</h4>
+          <p style={{ fontSize: 12, opacity: 0.7 }}>
+            {t(
+              "gamify_desc",
+              "Enable 16× Range parallel (Tier A) and multi-file concurrency. Verified via cs.rin.ru t=95461. Fallback is single-stream if server lacks Accept-Ranges."
+            )}
+          </p>
+          <CheckboxField
+            label={t("gamify_enable_parallel", "Enable 16× parallel downloads")}
+            checked={form.gamifyEnableParallelDownloads}
+            onChange={() =>
+              handleChange({
+                gamifyEnableParallelDownloads: !form.gamifyEnableParallelDownloads,
+              })
+            }
+          />
+          <TextField
+            type="number"
+            min="4"
+            max="16"
+            step="1"
+            label={t("gamify_max_connections", "Max connections per file (4–16)")}
+            value={String(form.gamifyMaxConnections)}
+            disabled={!form.gamifyEnableParallelDownloads}
+            onChange={(e) => {
+              const v = Math.max(4, Math.min(16, parseInt(e.target.value, 10) || 16));
+              handleChange({ gamifyMaxConnections: v });
+            }}
+          />
+          <TextField
+            type="number"
+            min="1"
+            max="8"
+            step="1"
+            label={t("gamify_max_concurrent_files", "Max concurrent files (1–8, repack parts)")}
+            value={String(form.gamifyMaxConcurrentFiles)}
+            onChange={(e) => {
+              const v = Math.max(1, Math.min(8, parseInt(e.target.value, 10) || 3));
+              handleChange({ gamifyMaxConcurrentFiles: v });
+            }}
+          />
+          <CheckboxField
+            label={t("gamify_auto_reresolve", "Auto re-resolve stalled FuckingFast links")}
+            checked={form.gamifyAutoReResolve}
+            onChange={() =>
+              handleChange({ gamifyAutoReResolve: !form.gamifyAutoReResolve })
+            }
+          />
+        </div>
       </div>
 
       <div className="settings-context-panel__group">

@@ -194,6 +194,11 @@ export interface UserPreferences {
   hideLibraryClassicsBadges?: boolean;
   hideLibraryAchievementProgress?: boolean;
   autoplayAnimatedArtwork?: boolean;
+  // Gamify: fastest download tuning (Tier A/C)
+  gamifyMaxConnections?: number | null; // 4-16, default 16
+  gamifyMaxConcurrentFiles?: number | null; // 1-8, default 3 (Tier B)
+  gamifyAutoReResolve?: boolean; // auto re-resolve stalled FuckingFast
+  gamifyEnableParallelDownloads?: boolean; // master toggle for 16x
 }
 
 export interface NetworkInterface {

@@ -2088,27 +2088,44 @@ export class DownloadManager {
             return;
           }
 
-          // Gamify: try 16x parallel Range downloader if server supports it
+          // Gamify: try 16x parallel Range downloader if server supports it + prefs allow
           let useParallel = false;
+          let gamifyConns = 16;
           try {
-            const probe = new ParallelHttpDownloader(16);
-            const probeRes = await probe.probeSupport(
-              options.url,
-              options.headers || {}
-            );
-            if (
-              probeRes.supportsRange &&
-              probeRes.fileSize !== null &&
-              probeRes.fileSize >= 5 * 1024 * 1024
-            ) {
-              useParallel = true;
-              logger.log(
-                `[DownloadManager] Parallel supported (${probeRes.fileSize} bytes, 16x) -> using ParallelHttpDownloader`
-              );
+            // Read user prefs via db/levelKeys (ClassicLevel generic: <key, value>(key))
+            const prefs = await import("@main/level").then(async (m) => {
+              try {
+                const { db } = m;
+                const { levelKeys } = await import("@main/level/sublevels/keys");
+                return (await db.get<string, { gamifyEnableParallelDownloads?: boolean; gamifyMaxConnections?: number } | null>(levelKeys.userPreferences, { valueEncoding: "json" }).catch(() => null));
+              } catch {
+                return null;
+              }
+            }).catch(() => null);
+            const enabled = (prefs as { gamifyEnableParallelDownloads?: boolean } | null)?.gamifyEnableParallelDownloads ?? true;
+            gamifyConns = Math.max(4, Math.min(16, (prefs as { gamifyMaxConnections?: number } | null)?.gamifyMaxConnections ?? 16));
+            if (!enabled) {
+              logger.log("[DownloadManager] Gamify parallel disabled by prefs -> single-stream");
             } else {
-              logger.log(
-                `[DownloadManager] Parallel not supported (range=${probeRes.supportsRange} size=${probeRes.fileSize}) -> fallback single-stream`
+              const probe = new ParallelHttpDownloader(gamifyConns);
+              const probeRes = await probe.probeSupport(
+                options.url,
+                options.headers || {}
               );
+              if (
+                probeRes.supportsRange &&
+                probeRes.fileSize !== null &&
+                probeRes.fileSize >= 5 * 1024 * 1024
+              ) {
+                useParallel = true;
+                logger.log(
+                  `[DownloadManager] Parallel supported (${probeRes.fileSize} bytes, ${gamifyConns}x) -> using ParallelHttpDownloader`
+                );
+              } else {
+                logger.log(
+                  `[DownloadManager] Parallel not supported (range=${probeRes.supportsRange} size=${probeRes.fileSize}) -> fallback single-stream`
+                );
+              }
             }
           } catch (probeErr) {
             logger.log(
@@ -2117,7 +2134,7 @@ export class DownloadManager {
           }
 
           if (useParallel) {
-            this.parallelDownloader = new ParallelHttpDownloader(16);
+            this.parallelDownloader = new ParallelHttpDownloader(gamifyConns);
             this.jsDownloader = null;
             this.usingParallelDownloader = true;
             this.usingJsDownloader = true; // keep true so status polling uses JS path
