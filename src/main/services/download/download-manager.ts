@@ -40,6 +40,7 @@ import {
   DEFAULT_DOWNLOAD_USER_AGENT,
   JsHttpDownloader,
 } from "./js-http-downloader";
+import { ParallelHttpDownloader } from "./parallel-http-downloader";
 import {
   clampProgress,
   isRetryableHttpStatus,
@@ -92,7 +93,9 @@ interface AllDebridBatchState {
 export class DownloadManager {
   private static downloadingGameId: string | null = null;
   private static jsDownloader: JsHttpDownloader | null = null;
+  private static parallelDownloader: ParallelHttpDownloader | null = null;
   private static usingJsDownloader = false;
+  private static usingParallelDownloader = false;
   private static isPreparingDownload = false;
   private static allDebridBatch: AllDebridBatchState | null = null;
   private static maxDownloadSpeedBytesPerSecond: number | null = null;
@@ -120,7 +123,7 @@ export class DownloadManager {
   public static get isJsDownloadActive(): boolean {
     return (
       this.usingJsDownloader &&
-      this.jsDownloader !== null &&
+      (this.jsDownloader !== null || this.parallelDownloader !== null) &&
       this.downloadingGameId !== null
     );
   }
@@ -332,6 +335,7 @@ export class DownloadManager {
 
     this.maxDownloadSpeedBytesPerSecond = normalizedLimit;
     this.jsDownloader?.setMaxDownloadSpeedBytesPerSecond(normalizedLimit);
+    this.parallelDownloader?.setMaxDownloadSpeedBytesPerSecond(normalizedLimit);
 
     await PythonRPC.rpc
       .call("action", {
@@ -444,9 +448,11 @@ export class DownloadManager {
       }
     }
 
-    if (!this.jsDownloader) return null;
+    const activeDownloader =
+      this.parallelDownloader ?? this.jsDownloader;
+    if (!activeDownloader) return null;
 
-    const status = this.jsDownloader.getDownloadStatus();
+    const status = activeDownloader.getDownloadStatus();
     if (!status) return null;
 
     try {
@@ -1026,6 +1032,8 @@ export class DownloadManager {
       this.queueHeldForDiskSpace = false;
       this.downloadingGameId = null;
       this.usingJsDownloader = false;
+      this.usingParallelDownloader = false;
+      this.parallelDownloader = null;
       this.jsDownloader = null;
       this.allDebridBatch = null;
     }
@@ -1063,6 +1071,8 @@ export class DownloadManager {
     this.downloadingGameId = null;
     this.isPreparingDownload = false;
     this.usingJsDownloader = false;
+    this.usingParallelDownloader = false;
+    this.parallelDownloader = null;
     this.jsDownloader = null;
     this.allDebridBatch = null;
     WindowManager.mainWindow?.setProgressBar(-1);
@@ -1153,6 +1163,17 @@ export class DownloadManager {
   }
 
   static async pauseDownload(downloadKey = this.downloadingGameId) {
+    if (this.usingParallelDownloader && this.parallelDownloader) {
+      logger.log("[DownloadManager] Pausing Parallel download");
+      this.parallelDownloader.pauseDownload();
+      if (downloadKey === this.downloadingGameId) {
+        WindowManager.mainWindow?.setProgressBar(-1);
+        this.downloadingGameId = null;
+        this.usingParallelDownloader = false;
+        this.usingJsDownloader = false;
+      }
+      return;
+    }
     if (this.usingJsDownloader && this.jsDownloader) {
       logger.log("[DownloadManager] Pausing JS download");
       this.jsDownloader.pauseDownload();
@@ -1183,7 +1204,14 @@ export class DownloadManager {
       // late-resolving prepare cannot spawn a downloader after cancellation.
       this.startGeneration += 1;
 
-      if (this.usingJsDownloader && this.jsDownloader) {
+      if (this.usingParallelDownloader && this.parallelDownloader) {
+        logger.log("[DownloadManager] Cancelling Parallel download");
+        this.parallelDownloader.cancelDownload();
+        this.parallelDownloader = null;
+        this.usingParallelDownloader = false;
+        this.usingJsDownloader = false;
+        this.allDebridBatch = null;
+      } else if (this.usingJsDownloader && this.jsDownloader) {
         logger.log("[DownloadManager] Cancelling JS download");
         this.jsDownloader.cancelDownload();
         this.jsDownloader = null;
@@ -1200,6 +1228,9 @@ export class DownloadManager {
       this.downloadingGameId = null;
       this.isPreparingDownload = false;
       this.usingJsDownloader = false;
+      this.usingParallelDownloader = false;
+      this.parallelDownloader = null;
+      this.jsDownloader = null;
       this.allDebridBatch = null;
     } else if (downloadKey) {
       await PythonRPC.rpc
@@ -2057,28 +2088,99 @@ export class DownloadManager {
             return;
           }
 
-          this.jsDownloader = new JsHttpDownloader();
-          this.jsDownloader.setMaxDownloadSpeedBytesPerSecond(
-            this.maxDownloadSpeedBytesPerSecond
-          );
-          this.isPreparingDownload = false;
-
-          this.logResolvedUrl(options.url);
-          this.jsDownloader.startDownload(options).catch((err) => {
-            void this.handleRuntimeDownloadError(downloadId, err).catch(
-              (error) => {
-                logger.error(
-                  `[DownloadManager] Failed to handle download error for ${downloadId}`,
-                  error
-                );
-              }
+          // Gamify: try 16x parallel Range downloader if server supports it
+          let useParallel = false;
+          try {
+            const probe = new ParallelHttpDownloader(16);
+            const probeRes = await probe.probeSupport(
+              options.url,
+              options.headers || {}
             );
-          });
+            if (
+              probeRes.supportsRange &&
+              probeRes.fileSize !== null &&
+              probeRes.fileSize >= 5 * 1024 * 1024
+            ) {
+              useParallel = true;
+              logger.log(
+                `[DownloadManager] Parallel supported (${probeRes.fileSize} bytes, 16x) -> using ParallelHttpDownloader`
+              );
+            } else {
+              logger.log(
+                `[DownloadManager] Parallel not supported (range=${probeRes.supportsRange} size=${probeRes.fileSize}) -> fallback single-stream`
+              );
+            }
+          } catch (probeErr) {
+            logger.log(
+              `[DownloadManager] Parallel probe failed, fallback: ${probeErr}`
+            );
+          }
+
+          if (useParallel) {
+            this.parallelDownloader = new ParallelHttpDownloader(16);
+            this.jsDownloader = null;
+            this.usingParallelDownloader = true;
+            this.usingJsDownloader = true; // keep true so status polling uses JS path
+            if (this.maxDownloadSpeedBytesPerSecond)
+              this.parallelDownloader.setMaxDownloadSpeedBytesPerSecond(
+                this.maxDownloadSpeedBytesPerSecond
+              );
+            this.isPreparingDownload = false;
+            this.logResolvedUrl(options.url);
+            this.parallelDownloader.startDownload(options).catch((err) => {
+              if (err.message === "PARALLEL_NOT_SUPPORTED") {
+                logger.log(
+                  "[DownloadManager] Parallel fallback triggered, retrying single-stream"
+                );
+                this.parallelDownloader = null;
+                this.usingParallelDownloader = false;
+                this.jsDownloader = new JsHttpDownloader();
+                this.jsDownloader.setMaxDownloadSpeedBytesPerSecond(
+                  this.maxDownloadSpeedBytesPerSecond
+                );
+                this.jsDownloader.startDownload(options).catch((e2) => {
+                  void this.handleRuntimeDownloadError(downloadId, e2);
+                });
+                return;
+              }
+              void this.handleRuntimeDownloadError(downloadId, err).catch(
+                (error) => {
+                  logger.error(
+                    `[DownloadManager] Parallel failed for ${downloadId}`,
+                    error
+                  );
+                }
+              );
+            });
+          } else {
+            this.parallelDownloader = null;
+            this.usingParallelDownloader = false;
+            this.jsDownloader = new JsHttpDownloader();
+            this.jsDownloader.setMaxDownloadSpeedBytesPerSecond(
+              this.maxDownloadSpeedBytesPerSecond
+            );
+            this.isPreparingDownload = false;
+
+            this.logResolvedUrl(options.url);
+            this.jsDownloader.startDownload(options).catch((err) => {
+              void this.handleRuntimeDownloadError(downloadId, err).catch(
+                (error) => {
+                  logger.error(
+                    `[DownloadManager] Failed to handle download error for ${downloadId}`,
+                    error
+                  );
+                }
+              );
+            });
+          }
         }
       } catch (err) {
         if (this.startGeneration === myGeneration) {
           this.isPreparingDownload = false;
           this.usingJsDownloader = false;
+          this.usingParallelDownloader = false;
+          this.parallelDownloader = null;
+          this.jsDownloader = null;
           this.downloadingGameId = null;
           this.allDebridBatch = null;
         }

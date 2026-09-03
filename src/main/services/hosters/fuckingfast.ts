@@ -75,40 +75,120 @@ export class FuckingFastApi {
     return this.FUCKINGFAST_DOMAINS.some((domain) => lowerUrl.includes(domain));
   }
 
-  private static async getFuckingFastDirectLink(url: string): Promise<string> {
-    try {
-      logger.log(`[FuckingFast] Starting download link extraction for: ${url}`);
-      const response = await axios.get(url, {
-        headers: { "User-Agent": HOSTER_USER_AGENT },
-        timeout: 30000,
-      });
-
-      const html = response.data;
-
-      if (html.toLowerCase().includes("rate limit")) {
-        logger.error(`[FuckingFast] Rate limit detected`);
-        throw new Error(
-          "Rate limit exceeded. Please wait a few minutes and try again."
+  private static async getFuckingFastDirectLink(
+    url: string,
+    retries = 3
+  ): Promise<string> {
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        logger.log(
+          `[FuckingFast] Starting download link extraction for: ${url} (attempt ${attempt}/${retries})`
         );
-      }
+        const response = await axios.get(url, {
+          headers: {
+            "User-Agent": HOSTER_USER_AGENT,
+            Accept:
+              "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+            Referer: "https://fitgirl-repacks.site/",
+          },
+          timeout: 30000,
+          // Gamify: follow redirects, allow Cloudflare challenge pages to surface
+          maxRedirects: 5,
+          validateStatus: (s) => s < 500,
+        });
 
-      if (html.includes("File Not Found Or Deleted")) {
-        logger.error(`[FuckingFast] File not found or deleted`);
-        throw new Error("File not found or deleted");
-      }
+        const html: string = response.data ?? "";
 
-      const match = this.FUCKINGFAST_REGEX.exec(html);
-      if (!match || !match[1]) {
-        logger.error(`[FuckingFast] Could not extract download link`);
-        throw new Error("Could not extract download link from page");
-      }
+        // Cloudflare / anti-bot gate — Hydra upstream misses this, FitFast uses Camoufox.
+        // Detect and give actionable error instead of regex miss.
+        if (
+          html.includes("Attention Required!") ||
+          html.includes("cf-challenge") ||
+          html.includes("cf-turnstile") ||
+          response.status === 503 ||
+          response.headers["cf-mitigated"] === "challenge"
+        ) {
+          logger.warn(
+            `[FuckingFast] Cloudflare challenge detected (status ${response.status}) — retry ${attempt}/${retries}`
+          );
+          if (attempt < retries) {
+            await new Promise((r) => setTimeout(r, 2000 * attempt));
+            continue;
+          }
+          throw new Error(
+            "FuckingFast is behind Cloudflare challenge. Try again in 30s or use TorBox/Real-Debrid cached link."
+          );
+        }
 
-      logger.log(`[FuckingFast] Successfully extracted direct link`);
-      return match[1];
-    } catch (error) {
-      logger.error(`[FuckingFast] Error:`, error);
-      handleHosterError(error);
+        if (html.toLowerCase().includes("rate limit")) {
+          logger.error(`[FuckingFast] Rate limit detected`);
+          throw new Error(
+            "Rate limit exceeded. Please wait a few minutes and try again."
+          );
+        }
+
+        if (html.includes("File Not Found Or Deleted")) {
+          logger.error(`[FuckingFast] File not found or deleted`);
+          throw new Error("File not found or deleted");
+        }
+
+        // Upstream regex covers window.open("https://fuckingfast.co/dl/...").
+        // Gamify also handles newer variant: window.open('https://fuckingfast.co/dl/...') and direct href.
+        const regexes = [
+          this.FUCKINGFAST_REGEX,
+          /window\.open\('https:\/\/fuckingfast\.co\/dl\/[^']*'\)/,
+          /href="(https:\/\/fuckingfast\.co\/dl\/[^"]*)"/,
+        ];
+        let direct: string | undefined;
+        for (const re of regexes) {
+          const m = re.exec(html);
+          if (m?.[1]) {
+            direct = m[1].replace(/^'/, "").replace(/'$/, "").replace(/"/g, "");
+            // normalize single-quote wrapper variant
+            if (direct.startsWith("window.open(")) {
+              const inner = /window\.open\(['"]([^'"]+)['"]\)/.exec(direct);
+              if (inner?.[1]) direct = inner[1];
+            }
+            break;
+          }
+        }
+        // also try direct extraction without capture group for single-quote regex
+        if (!direct) {
+          const alt = /window\.open\('https:\/\/fuckingfast\.co\/dl\/[^']*'\)/.exec(html);
+          if (alt?.[0]) {
+            const im = /'(https:\/\/fuckingfast\.co\/dl\/[^']*)'/.exec(alt[0]);
+            if (im?.[1]) direct = im[1];
+          }
+        }
+
+        if (!direct) {
+          logger.error(`[FuckingFast] Could not extract download link`);
+          if (attempt < retries) {
+            await new Promise((r) => setTimeout(r, 1500 * attempt));
+            continue;
+          }
+          throw new Error("Could not extract download link from page");
+        }
+
+        logger.log(`[FuckingFast] Successfully extracted direct link`);
+        return direct;
+      } catch (error) {
+        // Retry on transient network errors (ETIMEDOUT, ECONNRESET) up to retries
+        const isTransient =
+          axios.isAxiosError(error) &&
+          (!error.response || error.response.status >= 500);
+        if (isTransient && attempt < retries) {
+          logger.warn(`[FuckingFast] Transient error, retrying ${attempt}/${retries}: ${error}`);
+          await new Promise((r) => setTimeout(r, 1500 * attempt));
+          continue;
+        }
+        logger.error(`[FuckingFast] Error:`, error);
+        handleHosterError(error);
+      }
     }
+    // Should be unreachable due to handleHosterError throw, but TS needs return
+    throw new Error("FuckingFast extraction failed after retries");
   }
 
   public static async getDirectLink(url: string): Promise<string> {
