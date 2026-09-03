@@ -509,7 +509,7 @@ export function useCatalogueData() {
           .filter((s) => !s.fingerprint?.startsWith("local-"))
           .map((s) => s.id);
         let localEdges: SearchGamesResponseData["edges"] = [];
-        if (localSources.length > 0 && deferredTitle) {
+        if (localSources.length > 0) {
           try {
             const localResults = await Promise.all(
               localSources.map(async (src) => {
@@ -521,23 +521,31 @@ export function useCatalogueData() {
                       title: string;
                       objectId: string;
                       shop: string;
+                      downloadSources?: string[];
                     }>;
                   };
                   const games = Array.isArray(data.games) ? data.games : [];
-                  return games
-                    .filter((g) =>
-                      g.title
-                        .toLowerCase()
-                        .includes(deferredTitle.toLowerCase())
-                    )
-                    .slice(0, pageSize)
-                    .map((g) => ({
-                      id: `${g.shop}:${g.objectId}`,
-                      shop: g.shop as any,
-                      objectId: g.objectId,
-                      title: g.title,
-                      downloadSources: [src.id],
-                    }));
+                  const filtered = deferredTitle
+                    ? games.filter((g) =>
+                        g.title
+                          .toLowerCase()
+                          .includes(deferredTitle.toLowerCase())
+                      )
+                    : games;
+                  // Respect downloadSourceIds filter: if searching within specific source, only that source's games
+                  const sourceFiltered = downloadSourceIds.length
+                    ? filtered.filter(() =>
+                        // local source id is src.id, so if filtering by ids, include only if src.id in filter
+                        downloadSourceIds.includes(src.id)
+                      )
+                    : filtered;
+                  return sourceFiltered.slice(0, pageSize).map((g) => ({
+                    id: `${g.shop}:${g.objectId}`,
+                    shop: g.shop as any,
+                    objectId: g.objectId,
+                    title: g.title,
+                    downloadSources: [src.id],
+                  }));
                 } catch {
                   return [];
                 }
