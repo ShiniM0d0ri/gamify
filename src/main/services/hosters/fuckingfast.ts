@@ -75,6 +75,20 @@ export class FuckingFastApi {
     return this.FUCKINGFAST_DOMAINS.some((domain) => lowerUrl.includes(domain));
   }
 
+  private static async shouldAutoReResolve(): Promise<boolean> {
+    try {
+      const { db } = await import("@main/level");
+      const { levelKeys } = await import("@main/level/sublevels/keys");
+      const prefs = await db.get<string, { gamifyAutoReResolve?: boolean } | null>(
+        levelKeys.userPreferences,
+        { valueEncoding: "json" }
+      ).catch(() => null);
+      return prefs?.gamifyAutoReResolve ?? true;
+    } catch {
+      return true;
+    }
+  }
+
   private static async getFuckingFastDirectLink(
     url: string,
     retries = 3
@@ -101,7 +115,7 @@ export class FuckingFastApi {
         const html: string = response.data ?? "";
 
         // Cloudflare / anti-bot gate — Hydra upstream misses this, FitFast uses Camoufox.
-        // Detect and give actionable error instead of regex miss.
+        // Detect and give actionable error instead of regex miss. Respects gamifyAutoReResolve pref.
         if (
           html.includes("Attention Required!") ||
           html.includes("cf-challenge") ||
@@ -109,12 +123,18 @@ export class FuckingFastApi {
           response.status === 503 ||
           response.headers["cf-mitigated"] === "challenge"
         ) {
+          const autoReResolve = await FuckingFastApi.shouldAutoReResolve();
           logger.warn(
-            `[FuckingFast] Cloudflare challenge detected (status ${response.status}) — retry ${attempt}/${retries}`
+            `[FuckingFast] Cloudflare challenge detected (status ${response.status}, autoReResolve=${autoReResolve}) — retry ${attempt}/${retries}`
           );
-          if (attempt < retries) {
+          if (autoReResolve && attempt < retries) {
             await new Promise((r) => setTimeout(r, 2000 * attempt));
             continue;
+          }
+          if (!autoReResolve) {
+            throw new Error(
+              "FuckingFast is behind Cloudflare challenge (auto re-resolve disabled in Gamify Settings). Enable it or use TorBox/Real-Debrid."
+            );
           }
           throw new Error(
             "FuckingFast is behind Cloudflare challenge. Try again in 30s or use TorBox/Real-Debrid cached link."
