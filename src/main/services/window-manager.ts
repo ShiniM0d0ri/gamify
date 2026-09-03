@@ -1070,7 +1070,7 @@ export class WindowManager {
       tray.popUpContextMenu(contextMenu);
     };
 
-    tray.setToolTip("Hydra Launcher");
+    tray.setToolTip("Gamify");
 
     if (process.platform === "win32") {
       await updateSystemTray();

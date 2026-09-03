@@ -16,13 +16,39 @@ const addDownloadSource = async (
       throw new Error("Download source with this URL already exists");
     }
 
-    const downloadSource = await HydraApi.post<DownloadSource>(
-      "/download-sources",
-      {
+    let downloadSource: DownloadSource;
+    try {
+      downloadSource = await HydraApi.post<DownloadSource>(
+        "/download-sources",
+        {
+          url,
+        },
+        { needsAuth: false }
+      );
+    } catch (apiError: any) {
+      // Gamify: fallback for RIN direct sources (FitGirl/DODI) or when Hydra API is unreachable / source-unreachable.
+      // Allows adding any URL locally so catalog can still try to use it (e.g., direct repack JSON).
+      logger.warn(
+        "[Gamify] HydraApi add source failed, using local fallback for",
         url,
-      },
-      { needsAuth: false }
-    );
+        apiError?.message
+      );
+      const id =
+        url
+          .replace(/^https?:\/\//, "")
+          .replace(/[^a-zA-Z0-9]/g, "-")
+          .slice(0, 40) +
+        "-" +
+        Math.random().toString(36).slice(2, 6);
+      downloadSource = {
+        id,
+        name: url.replace(/^https?:\/\//, "").split("/")[0],
+        url,
+        status: "active",
+        downloadCount: 0,
+        fingerprint: undefined,
+      } as DownloadSource;
+    }
 
     if (HydraApi.isLoggedIn() && HydraApi.hasActiveSubscription()) {
       try {
