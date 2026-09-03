@@ -69,7 +69,6 @@ jobs:
         run: yarn build:win
         env:
           NODE_OPTIONS: --max-old-space-size=4096
-        env:
           MAIN_VITE_API_URL: ${{ vars.MAIN_VITE_STAGING_API_URL }}
           MAIN_VITE_AUTH_URL: ${{ vars.MAIN_VITE_STAGING_AUTH_URL }}
           MAIN_VITE_CHECKOUT_URL: ${{ vars.MAIN_VITE_STAGING_CHECKOUT_URL }}
@@ -83,6 +82,7 @@ jobs:
           RENDERER_VITE_TORBOX_REFERRAL_CODE: ${{ vars.RENDERER_VITE_TORBOX_REFERRAL_CODE }}
 
       - name: Upload build
+        continue-on-error: true
         env:
           BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
           S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
@@ -184,6 +184,7 @@ jobs:
           RENDERER_VITE_TORBOX_REFERRAL_CODE: ${{ vars.RENDERER_VITE_TORBOX_REFERRAL_CODE }}
 
       - name: Upload build
+        continue-on-error: true
         env:
           BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
           S3_ENDPOINT: ${{ secrets.S3_ENDPOINT }}
