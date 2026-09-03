@@ -51,6 +51,7 @@ jobs:
         run: |
           yarn build:linux
         env:
+          NODE_OPTIONS: --max-old-space-size=4096
           MAIN_VITE_API_URL: ${{ vars.MAIN_VITE_STAGING_API_URL }}
           MAIN_VITE_AUTH_URL: ${{ vars.MAIN_VITE_STAGING_AUTH_URL }}
           MAIN_VITE_CHECKOUT_URL: ${{ vars.MAIN_VITE_STAGING_CHECKOUT_URL }}
@@ -66,6 +67,8 @@ jobs:
       - name: Build Windows
         if: matrix.os == 'windows-2022'
         run: yarn build:win
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         env:
           MAIN_VITE_API_URL: ${{ vars.MAIN_VITE_STAGING_API_URL }}
           MAIN_VITE_AUTH_URL: ${{ vars.MAIN_VITE_STAGING_AUTH_URL }}
@@ -150,6 +153,7 @@ jobs:
         run: |
           yarn build:linux
         env:
+          NODE_OPTIONS: --max-old-space-size=4096
           MAIN_VITE_API_URL: ${{ vars.MAIN_VITE_API_URL }}
           MAIN_VITE_AUTH_URL: ${{ vars.MAIN_VITE_AUTH_URL }}
           MAIN_VITE_CHECKOUT_URL: ${{ vars.MAIN_VITE_CHECKOUT_URL }}
@@ -166,6 +170,7 @@ jobs:
         if: matrix.os == 'windows-2022'
         run: yarn build:win
         env:
+          NODE_OPTIONS: --max-old-space-size=4096
           MAIN_VITE_API_URL: ${{ vars.MAIN_VITE_API_URL }}
           MAIN_VITE_AUTH_URL: ${{ vars.MAIN_VITE_AUTH_URL }}
           MAIN_VITE_CHECKOUT_URL: ${{ vars.MAIN_VITE_CHECKOUT_URL }}
