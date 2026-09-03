@@ -46,7 +46,7 @@ const addDownloadSource = async (
         url,
         status: "active",
         downloadCount: 0,
-        fingerprint: undefined,
+        fingerprint: `local-${id}`,
       } as DownloadSource;
     }
 
