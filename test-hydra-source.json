@@ -1,0 +1,18 @@
+{
+  "name": "Gamify Test Source",
+  "games": [
+    {
+      "title": "Test Game",
+      "objectId": "test-game-1",
+      "shop": "steam",
+      "downloadOptions": [
+        {
+          "title": "Test Download",
+          "uris": ["https://speed.hetzner.de/100MB.bin"],
+          "fileSize": 104857600,
+          "uploadDate": "2026-09-03T00:00:00.000Z"
+        }
+      ]
+    }
+  ]
+}
