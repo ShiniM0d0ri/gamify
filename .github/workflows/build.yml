@@ -12,12 +12,8 @@ concurrency:
 
 jobs:
   build:
-    strategy:
-      matrix:
-        os: [windows-2022, ubuntu-latest]
-      fail-fast: false
-
-    runs-on: ${{ matrix.os }}
+    # Gamify: Windows-only (per spec, fastest download for Windows), so single runner vs Hydra's 2 OS
+    runs-on: windows-2022
 
     steps:
       - name: Check out Git repository
@@ -46,26 +42,7 @@ jobs:
       - name: Build Python RPC with cx_Freeze
         run: python python_rpc/setup.py build
 
-      - name: Build Linux
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          yarn build:linux
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-          MAIN_VITE_API_URL: ${{ vars.MAIN_VITE_STAGING_API_URL }}
-          MAIN_VITE_AUTH_URL: ${{ vars.MAIN_VITE_STAGING_AUTH_URL }}
-          MAIN_VITE_CHECKOUT_URL: ${{ vars.MAIN_VITE_STAGING_CHECKOUT_URL }}
-          MAIN_VITE_NIMBUS_API_URL: ${{ vars.MAIN_VITE_NIMBUS_API_URL }}
-          RENDERER_VITE_EXTERNAL_RESOURCES_URL: ${{ vars.EXTERNAL_RESOURCES_URL }}
-          MAIN_VITE_EXTERNAL_RESOURCES_URL: ${{ vars.EXTERNAL_RESOURCES_URL }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          RENDERER_VITE_SENTRY_DSN: ${{ vars.SENTRY_DSN }}
-          RENDERER_VITE_REAL_DEBRID_REFERRAL_ID: ${{ vars.RENDERER_VITE_REAL_DEBRID_REFERRAL_ID }}
-          RENDERER_VITE_TORBOX_REFERRAL_CODE: ${{ vars.RENDERER_VITE_TORBOX_REFERRAL_CODE }}
-
       - name: Build Windows
-        if: matrix.os == 'windows-2022'
         run: yarn build:win
         env:
           NODE_OPTIONS: --max-old-space-size=4096
@@ -99,7 +76,7 @@ jobs:
       - name: Create artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Build-staging-${{ matrix.os }}
+          name: Build-staging-windows-2022
           path: |
             dist/*-portable.exe
             dist/*.zip
@@ -112,14 +89,10 @@ jobs:
             dist/*.AppImage
 
   build-production:
-    if: github.event_name == 'push'
+    # Gamify: only on tags for Releases (faster: 1 job per push instead of 4)
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
 
-    strategy:
-      matrix:
-        os: [windows-2022, ubuntu-latest]
-      fail-fast: false
-
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-2022
 
     steps:
       - name: Check out Git repository
@@ -148,26 +121,7 @@ jobs:
       - name: Build Python RPC with cx_Freeze
         run: python python_rpc/setup.py build
 
-      - name: Build Linux
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          yarn build:linux
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-          MAIN_VITE_API_URL: ${{ vars.MAIN_VITE_API_URL }}
-          MAIN_VITE_AUTH_URL: ${{ vars.MAIN_VITE_AUTH_URL }}
-          MAIN_VITE_CHECKOUT_URL: ${{ vars.MAIN_VITE_CHECKOUT_URL }}
-          MAIN_VITE_NIMBUS_API_URL: ${{ vars.MAIN_VITE_NIMBUS_API_URL }}
-          RENDERER_VITE_EXTERNAL_RESOURCES_URL: ${{ vars.EXTERNAL_RESOURCES_URL }}
-          MAIN_VITE_EXTERNAL_RESOURCES_URL: ${{ vars.EXTERNAL_RESOURCES_URL }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
-          RENDERER_VITE_SENTRY_DSN: ${{ vars.SENTRY_DSN }}
-          RENDERER_VITE_REAL_DEBRID_REFERRAL_ID: ${{ vars.RENDERER_VITE_REAL_DEBRID_REFERRAL_ID }}
-          RENDERER_VITE_TORBOX_REFERRAL_CODE: ${{ vars.RENDERER_VITE_TORBOX_REFERRAL_CODE }}
-
       - name: Build Windows
-        if: matrix.os == 'windows-2022'
         run: yarn build:win
         env:
           NODE_OPTIONS: --max-old-space-size=4096
@@ -201,7 +155,7 @@ jobs:
       - name: Create artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Build-production-${{ matrix.os }}
+          name: Build-production-windows-2022
           path: |
             dist/*-portable.exe
             dist/*.zip
