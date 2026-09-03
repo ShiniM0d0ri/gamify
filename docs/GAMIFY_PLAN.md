@@ -114,3 +114,4 @@ Same as Hydra: repo contains only generic manager + source fetcher, no game byte
 ---
 *Next: implement `parallel-http-downloader.ts` stub and wire to `DownloadManager`.*
 
+# Fix: set correct API vars and clear invalid downloadSources for catalog
