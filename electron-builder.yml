@@ -72,7 +72,7 @@ appImage:
 npmRebuild: false
 publish:
   provider: github
-  owner: darkflamemaster
+  owner: ShiniM0d0ri
   repo: gamify
 electronDownload:
   mirror: https://npmmirror.com/mirrors/electron/
