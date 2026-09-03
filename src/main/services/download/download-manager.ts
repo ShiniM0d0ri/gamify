@@ -96,6 +96,10 @@ export class DownloadManager {
   private static parallelDownloader: ParallelHttpDownloader | null = null;
   private static usingJsDownloader = false;
   private static usingParallelDownloader = false;
+  // Gamify: Map refactor for N concurrent downloads (Tier B). Primary singleton kept for hero, maps for batch secondary.
+  private static activeJsDownloaders = new Map<string, JsHttpDownloader>();
+  private static activeParallelDownloaders = new Map<string, ParallelHttpDownloader>();
+  private static activeDownloadIds = new Set<string>();
   private static isPreparingDownload = false;
   private static allDebridBatch: AllDebridBatchState | null = null;
   private static maxDownloadSpeedBytesPerSecond: number | null = null;
@@ -117,19 +121,28 @@ export class DownloadManager {
   private static readonly PREPARED_JS_DOWNLOAD_TTL_MS = 120_000;
 
   public static hasActiveDownload() {
-    return this.downloadingGameId !== null;
+    return this.downloadingGameId !== null || this.activeDownloadIds.size > 0;
   }
 
   public static get isJsDownloadActive(): boolean {
-    return (
+    if (
       this.usingJsDownloader &&
       (this.jsDownloader !== null || this.parallelDownloader !== null) &&
       this.downloadingGameId !== null
-    );
+    )
+      return true;
+    // Gamify: also check Map for secondary concurrent downloads
+    return this.activeJsDownloaders.size > 0 || this.activeParallelDownloaders.size > 0;
   }
 
   public static getActiveDownloadId(): string | null {
     return this.downloadingGameId;
+  }
+
+  public static getActiveDownloadIds(): string[] {
+    const ids = new Set<string>(this.activeDownloadIds);
+    if (this.downloadingGameId) ids.add(this.downloadingGameId);
+    return Array.from(ids);
   }
 
   public static notifyReconnecting(value: boolean): void {
@@ -336,6 +349,9 @@ export class DownloadManager {
     this.maxDownloadSpeedBytesPerSecond = normalizedLimit;
     this.jsDownloader?.setMaxDownloadSpeedBytesPerSecond(normalizedLimit);
     this.parallelDownloader?.setMaxDownloadSpeedBytesPerSecond(normalizedLimit);
+    // Gamify: propagate to Map concurrent
+    for (const d of this.activeJsDownloaders.values()) d.setMaxDownloadSpeedBytesPerSecond(normalizedLimit);
+    for (const d of this.activeParallelDownloaders.values()) d.setMaxDownloadSpeedBytesPerSecond(normalizedLimit);
 
     await PythonRPC.rpc
       .call("action", {
@@ -1163,6 +1179,32 @@ export class DownloadManager {
   }
 
   static async pauseDownload(downloadKey = this.downloadingGameId) {
+    // Gamify: check secondary Map first for concurrent downloads
+    if (downloadKey && this.activeParallelDownloaders.has(downloadKey)) {
+      logger.log("[DownloadManager] Pausing Parallel download (Map)");
+      this.activeParallelDownloaders.get(downloadKey)!.pauseDownload();
+      this.activeParallelDownloaders.delete(downloadKey);
+      this.activeDownloadIds.delete(downloadKey);
+      if (downloadKey === this.downloadingGameId) {
+        WindowManager.mainWindow?.setProgressBar(-1);
+        this.downloadingGameId = null;
+        this.usingParallelDownloader = false;
+        this.usingJsDownloader = false;
+      }
+      return;
+    }
+    if (downloadKey && this.activeJsDownloaders.has(downloadKey)) {
+      logger.log("[DownloadManager] Pausing JS download (Map)");
+      this.activeJsDownloaders.get(downloadKey)!.pauseDownload();
+      this.activeJsDownloaders.delete(downloadKey);
+      this.activeDownloadIds.delete(downloadKey);
+      if (downloadKey === this.downloadingGameId) {
+        WindowManager.mainWindow?.setProgressBar(-1);
+        this.downloadingGameId = null;
+        this.usingJsDownloader = false;
+      }
+      return;
+    }
     if (this.usingParallelDownloader && this.parallelDownloader) {
       logger.log("[DownloadManager] Pausing Parallel download");
       this.parallelDownloader.pauseDownload();
@@ -1197,6 +1239,34 @@ export class DownloadManager {
   }
 
   static async cancelDownload(downloadKey = this.downloadingGameId) {
+    // Gamify: also handle Map concurrent entries even if not primary hero
+    if (downloadKey && this.activeParallelDownloaders.has(downloadKey)) {
+      logger.log("[DownloadManager] Cancelling Parallel download (Map)");
+      this.activeParallelDownloaders.get(downloadKey)!.cancelDownload();
+      this.activeParallelDownloaders.delete(downloadKey);
+      this.activeDownloadIds.delete(downloadKey);
+      if (downloadKey === this.downloadingGameId) {
+        this.downloadingGameId = null;
+        this.isPreparingDownload = false;
+        this.usingJsDownloader = false;
+        this.usingParallelDownloader = false;
+      }
+      WindowManager.sendToAppWindows("on-download-progress", null);
+      return;
+    }
+    if (downloadKey && this.activeJsDownloaders.has(downloadKey)) {
+      logger.log("[DownloadManager] Cancelling JS download (Map)");
+      this.activeJsDownloaders.get(downloadKey)!.cancelDownload();
+      this.activeJsDownloaders.delete(downloadKey);
+      this.activeDownloadIds.delete(downloadKey);
+      if (downloadKey === this.downloadingGameId) {
+        this.downloadingGameId = null;
+        this.isPreparingDownload = false;
+        this.usingJsDownloader = false;
+      }
+      WindowManager.sendToAppWindows("on-download-progress", null);
+      return;
+    }
     const isActiveDownload = downloadKey === this.downloadingGameId;
 
     if (isActiveDownload) {
