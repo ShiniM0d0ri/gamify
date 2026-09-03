@@ -676,6 +676,65 @@ export class DownloadManager {
   }
 
   public static async watchDownloads() {
+    // Gamify: support N concurrent watches via Map; fallback to singleton hero for compat
+    const activeIds = this.getActiveDownloadIds();
+    if (activeIds.length > 0) {
+      for (const activeDownloadKey of activeIds) {
+        const activeDownload = await downloadsSublevel.get(activeDownloadKey).catch(() => null);
+        if (!activeDownload) {
+          await this.cancelOrphanedDownload(activeDownloadKey);
+          continue;
+        }
+        // For Map entries, temporarily set downloadingGameId hero to this id for getDownloadStatus* helpers
+        const prevHero = this.downloadingGameId;
+        const prevUsing = this.usingJsDownloader;
+        const prevJs = this.jsDownloader;
+        const prevParallel = this.parallelDownloader;
+        // Swap in Map entry if present
+        if (this.activeJsDownloaders.has(activeDownloadKey)) {
+          this.downloadingGameId = activeDownloadKey;
+          this.jsDownloader = this.activeJsDownloaders.get(activeDownloadKey) ?? null;
+          this.parallelDownloader = null;
+          this.usingJsDownloader = true;
+        } else if (this.activeParallelDownloaders.has(activeDownloadKey)) {
+          this.downloadingGameId = activeDownloadKey;
+          this.parallelDownloader = this.activeParallelDownloaders.get(activeDownloadKey) ?? null;
+          this.jsDownloader = null;
+          this.usingJsDownloader = true;
+        }
+        const status = await this.getDownloadStatus();
+        // restore hero
+        this.downloadingGameId = prevHero;
+        this.jsDownloader = prevJs;
+        this.parallelDownloader = prevParallel;
+        this.usingJsDownloader = prevUsing;
+
+        if (!status) continue;
+        const { gameId, progress } = status;
+        const [download, game] = await Promise.all([
+          downloadsSublevel.get(gameId),
+          gamesSublevel.get(gameId),
+        ]);
+        if (!download || !game) continue;
+        if (await this.haltDownloadIfStorageIsFull(download, game, gameId)) continue;
+        this.sendProgressUpdate(progress, status, game);
+        if (
+          shouldFinalizeDownload({
+            usingJsDownloader: this.usingJsDownloader || this.activeJsDownloaders.has(gameId) || this.activeParallelDownloaders.has(gameId),
+            isCheckingFiles: status.isCheckingFiles,
+            isDownloadingMetadata: status.isDownloadingMetadata,
+            progress,
+            downloadStatus: download.status,
+          })
+        ) {
+          await this.handleDownloadCompletion(download, game, gameId);
+        }
+      }
+      this.orphanedDownloadCandidate = null;
+      if (this.queueHeldForDiskSpace) await this.retryQueueHeldForDiskSpace();
+      return;
+    }
+
     const activeDownloadKey = this.downloadingGameId;
 
     if (activeDownloadKey) {
