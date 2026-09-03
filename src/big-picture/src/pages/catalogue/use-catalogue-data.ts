@@ -501,19 +501,76 @@ export function useCatalogueData() {
           payload.platforms = values.platforms ?? [];
         }
 
+        // Gamify: handle local fallback sources (fingerprint local-*) without Hydra backend
+        const localSources = downloadSources.filter((s) =>
+          s.fingerprint?.startsWith("local-")
+        );
+        const remoteIds = downloadSources
+          .filter((s) => !s.fingerprint?.startsWith("local-"))
+          .map((s) => s.id);
+        let localEdges: SearchGamesResponseData["edges"] = [];
+        if (localSources.length > 0 && deferredTitle) {
+          try {
+            const localResults = await Promise.all(
+              localSources.map(async (src) => {
+                try {
+                  const res = await fetch(src.url);
+                  if (!res.ok) return [];
+                  const data = (await res.json()) as {
+                    games?: Array<{
+                      title: string;
+                      objectId: string;
+                      shop: string;
+                    }>;
+                  };
+                  const games = Array.isArray(data.games) ? data.games : [];
+                  return games
+                    .filter((g) =>
+                      g.title
+                        .toLowerCase()
+                        .includes(deferredTitle.toLowerCase())
+                    )
+                    .slice(0, pageSize)
+                    .map((g) => ({
+                      id: `${g.shop}:${g.objectId}`,
+                      shop: g.shop as any,
+                      objectId: g.objectId,
+                      title: g.title,
+                      downloadSources: [src.id],
+                    }));
+                } catch {
+                  return [];
+                }
+              })
+            );
+            localEdges = localResults.flat();
+          } catch {}
+        }
+
         const response =
           await globalThis.window.electron.hydraApi.post<SearchGamesResponseData>(
             "/catalogue/search",
             {
               data: {
                 ...payload,
-                downloadSourceIds,
+                downloadSourceIds: remoteIds,
                 take: pageSize,
                 skip,
               },
               needsAuth: false,
             }
           );
+
+        // Merge local fallback results when backend returns 0 and we have local matches
+        if (localEdges.length > 0) {
+          const existingIds = new Set(response.edges.map((e) => e.id));
+          const merged = [
+            ...localEdges.filter((e) => !existingIds.has(e.id)),
+            ...response.edges,
+          ];
+          (response as SearchGamesResponseData).edges = merged.slice(0, pageSize);
+          (response as SearchGamesResponseData).count += localEdges.length;
+        }
 
         if (
           requestIdRef.current !== requestId ||
